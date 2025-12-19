@@ -258,59 +258,112 @@ class HealthDataReader(
         getAggregateData(call, result)
     }
     
-    private fun getTotalCaloriesInInterval(call: MethodCall, result: Result) = scope.launch {
-        var response: Any? = null
-        var totalCalories: Double? = null
+    fun getTotalCaloriesInInterval(call: MethodCall, result: Result) {
+    val start = call.argument<Long>("startTime")!!
+    val end = call.argument<Long>("endTime")!!
+    val recordingMethodsToFilter = call.argument<List<Int>>("recordingMethodsToFilter")!!
 
+    if (recordingMethodsToFilter.isEmpty()) {
+        getAggregatedCalories(start, end, result)
+    } else {
+        getCaloriesFiltered(start, end, recordingMethodsToFilter, result)
+    }
+}
+
+// --------- Private Methods ---------
+
+/**
+ * Retrieves aggregated total calories using Health Connect's built-in aggregation.
+ * Optimized when no recording-method filtering is required.
+ *
+ * @param start Start time in milliseconds
+ * @param end End time in milliseconds
+ * @param result Flutter result callback returning total calories (nullable Double)
+ */
+private fun getAggregatedCalories(start: Long, end: Long, result: Result) {
+    val startInstant = Instant.ofEpochMilli(start)
+    val endInstant = Instant.ofEpochMilli(end)
+
+    scope.launch {
         try {
-            if (useHealthConnectIfAvailable && !healthConnectAvailable) {
-                Log.i("FLUTTER_HEALTH", "Health Connect not available on this device")
-                result.error(
-                    "HEALTH_CONNECT_UNAVAILABLE",
-                    "Health Connect not available on this device",
-                    null
-                )
-                return@launch
-            }
-
-            val start = call.argument<Long>("startTime")
-            val end = call.argument<Long>("endTime")
-            if (start == null || end == null) {
-                result.error("INVALID_ARGUMENTS", "startTime or endTime missing", null)
-                return@launch
-            }
-            if (end < start) {
-                result.error("INVALID_ARGUMENTS", "endTime must be >= startTime", null)
-                return@launch
-            }
-
-            val startInstant = Instant.ofEpochMilli(start)
-            val endInstant = Instant.ofEpochMilli(end)
-
-            Log.d("FLUTTER_HEALTH", "Fetching total calories from $startInstant to $endInstant.")
-
-            response = healthConnectClient.aggregate(
+            val response = healthConnectClient.aggregate(
                 AggregateRequest(
                     metrics = setOf(TotalCaloriesBurnedRecord.ENERGY_TOTAL),
-                    timeRangeFilter = TimeRangeFilter.between(startInstant, endInstant)
-                )
+                    timeRangeFilter = TimeRangeFilter.between(startInstant, endInstant),
+                ),
             )
 
-            totalCalories = response[TotalCaloriesBurnedRecord.ENERGY_TOTAL]?.inKilocalories
-            Log.d("FLUTTER_HEALTH", "Total calories = $totalCalories")
+            // ENERGY_TOTAL aggregate returns an energy value; convert to kcal if present
+            val totalCaloriesKcal: Double? = response[TotalCaloriesBurnedRecord.ENERGY_TOTAL]?.inKilocalories
 
-            // Return nullable Double (null means no data). If you prefer 0.0, send (totalCalories ?: 0.0)
-            result.success(totalCalories)
+            Log.i("FLUTTER_HEALTH::SUCCESS", "returning $totalCaloriesKcal total kcal")
+            // Return nullable Double (null means no data)
+            result.success(totalCaloriesKcal)
         } catch (e: Exception) {
-            Log.e("FLUTTER_HEALTH", "Failed to fetch total calories", e)
-            // Return an error so the Dart caller knows something went wrong
-            result.error("AGGREGATE_ERROR", e.message ?: "Unknown error", null)
-        } finally {
-            // optional cleanup — local vars are GC'd after this function
-            totalCalories = 0.0
-            response = null
+            Log.e(
+                "FLUTTER_HEALTH::ERROR",
+                "Unable to return total calories due to the following exception:"
+            )
+            Log.e("FLUTTER_HEALTH::ERROR", Log.getStackTraceString(e))
+            // Mirror steps behavior: return null on failure
+            result.success(null)
         }
     }
+}
+
+/**
+ * Retrieves total calories with recording method filtering applied.
+ * Reads individual TotalCaloriesBurnedRecord entries, filters them and sums energy.
+ *
+ * @param start Start time in milliseconds
+ * @param end End time in milliseconds
+ * @param recordingMethodsToFilter List of recording methods to exclude
+ * @param result Flutter result callback returning filtered total calories (Double)
+ */
+private fun getCaloriesFiltered(
+    start: Long,
+    end: Long,
+    recordingMethodsToFilter: List<Int>,
+    result: Result
+) {
+    scope.launch {
+        try {
+            val request = ReadRecordsRequest(
+                recordType = TotalCaloriesBurnedRecord::class,
+                timeRangeFilter = TimeRangeFilter.between(
+                    Instant.ofEpochMilli(start),
+                    Instant.ofEpochMilli(end)
+                ),
+            )
+
+            val response = healthConnectClient.readRecords(request)
+
+            val filteredRecords = recordingFilter.filterRecordsByRecordingMethods(
+                recordingMethodsToFilter,
+                response.records
+            )
+
+            // Sum energy (in kilocalories). If a record's energy is null, treat as 0.0
+            val totalCaloriesKcal = filteredRecords.sumOf {
+                val rec = it as TotalCaloriesBurnedRecord
+                rec.energy?.inKilocalories ?: 0.0
+            }
+
+            Log.i(
+                "FLUTTER_HEALTH::SUCCESS",
+                "returning $totalCaloriesKcal kcal (filtered by recording methods)"
+            )
+            result.success(totalCaloriesKcal)
+        } catch (e: Exception) {
+            Log.e(
+                "FLUTTER_HEALTH::ERROR",
+                "Unable to return filtered calories due to the following exception:"
+            )
+            Log.e("FLUTTER_HEALTH::ERROR", Log.getStackTraceString(e))
+            result.success(null)
+        }
+    }
+}
 
     /**
      * Gets total step count within a specified time interval with optional filtering.
