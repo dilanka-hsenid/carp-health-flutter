@@ -257,6 +257,60 @@ class HealthDataReader(
     fun getIntervalData(call: MethodCall, result: Result) {
         getAggregateData(call, result)
     }
+    
+    private fun getTotalCaloriesInInterval(call: MethodCall, result: Result) = scope.launch {
+        var response: Any? = null
+        var totalCalories: Double? = null
+
+        try {
+            if (useHealthConnectIfAvailable && !healthConnectAvailable) {
+                Log.i("FLUTTER_HEALTH", "Health Connect not available on this device")
+                result.error(
+                    "HEALTH_CONNECT_UNAVAILABLE",
+                    "Health Connect not available on this device",
+                    null
+                )
+                return@launch
+            }
+
+            val start = call.argument<Long>("startTime")
+            val end = call.argument<Long>("endTime")
+            if (start == null || end == null) {
+                result.error("INVALID_ARGUMENTS", "startTime or endTime missing", null)
+                return@launch
+            }
+            if (end < start) {
+                result.error("INVALID_ARGUMENTS", "endTime must be >= startTime", null)
+                return@launch
+            }
+
+            val startInstant = Instant.ofEpochMilli(start)
+            val endInstant = Instant.ofEpochMilli(end)
+
+            Log.d("FLUTTER_HEALTH", "Fetching total calories from $startInstant to $endInstant.")
+
+            response = healthConnectClient.aggregate(
+                AggregateRequest(
+                    metrics = setOf(TotalCaloriesBurnedRecord.ENERGY_TOTAL),
+                    timeRangeFilter = TimeRangeFilter.between(startInstant, endInstant)
+                )
+            )
+
+            totalCalories = response[TotalCaloriesBurnedRecord.ENERGY_TOTAL]?.inKilocalories
+            Log.d("FLUTTER_HEALTH", "Total calories = $totalCalories")
+
+            // Return nullable Double (null means no data). If you prefer 0.0, send (totalCalories ?: 0.0)
+            result.success(totalCalories)
+        } catch (e: Exception) {
+            Log.e("FLUTTER_HEALTH", "Failed to fetch total calories", e)
+            // Return an error so the Dart caller knows something went wrong
+            result.error("AGGREGATE_ERROR", e.message ?: "Unknown error", null)
+        } finally {
+            // optional cleanup — local vars are GC'd after this function
+            totalCalories = 0.0
+            response = null
+        }
+    }
 
     /**
      * Gets total step count within a specified time interval with optional filtering.

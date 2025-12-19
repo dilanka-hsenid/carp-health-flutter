@@ -155,7 +155,8 @@ class HealthPlugin(private var channel: MethodChannel? = null) :
             "getIntervalData" -> dataReader.getIntervalData(call, result)
             "getAggregateData" -> dataReader.getAggregateData(call, result)
             "getTotalStepsInInterval" -> dataReader.getTotalStepsInInterval(call, result)
-
+            "getTotalCaloriesInInterval" -> getTotalCaloriesInInterval(call, result)
+            
             // Writing data
             "writeData" -> dataWriter.writeData(call, result)
             "writeWorkoutData" -> dataWriter.writeWorkoutData(call, result)

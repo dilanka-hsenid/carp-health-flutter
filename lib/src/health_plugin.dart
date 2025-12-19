@@ -1462,6 +1462,23 @@ class Health {
     return stepsCount;
   }
 
+  Future<int?> getTotalCaloriesInInterval(
+      DateTime startTime,
+      DateTime endTime,
+      ) async {
+    final args = <String, dynamic>{
+      'startTime': startTime.millisecondsSinceEpoch,
+      'endTime': endTime.millisecondsSinceEpoch,
+    };
+
+    final calories = await _channel.invokeMethod<double?>(
+      'getTotalCaloriesInInterval',
+      args,
+    );
+    print('Calories: $calories');
+    return calories?.round();
+  }
+
   /// Assigns numbers to specific [HealthDataType]s.
   int _alignValue(HealthDataType type) => switch (type) {
     HealthDataType.SLEEP_IN_BED => 0,
