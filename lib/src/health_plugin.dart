@@ -1463,12 +1463,16 @@ class Health {
   }
 
   Future<int?> getTotalCaloriesInInterval(
-      DateTime startTime,
-      DateTime endTime,
-      ) async {
+    DateTime startTime,
+    DateTime endTime, {
+    bool includeManualEntry = true,
+  }) async {
     final args = <String, dynamic>{
       'startTime': startTime.millisecondsSinceEpoch,
       'endTime': endTime.millisecondsSinceEpoch,
+      'recordingMethodsToFilter': includeManualEntry
+          ? <RecordingMethod>[]
+          : [RecordingMethod.manual.toInt()],
     };
 
     final calories = await _channel.invokeMethod<double?>(
